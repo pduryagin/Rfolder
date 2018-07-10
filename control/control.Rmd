@@ -397,5 +397,5 @@ vowels_ranger <- mutate(vowels_test,
 confusionMatrix(vowels_ranger$yhat, vowels_ranger$gender)
 ```
 
-#Конец.
+#Конец
 ![Спасибо](https://gruzdev.org/wp-content/uploads/2017/06/spasibo-1080x675.jpg)
