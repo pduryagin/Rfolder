@@ -1,0 +1,2 @@
+stringr
+df_new <- mutate(df_old, gend = str_sub(name, 1, 1))

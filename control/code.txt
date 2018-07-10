@@ -1,0 +1,9 @@
+vowels <-import("english_vowels.txt", head=TRUE)
+skim(vowels)
+colnames (vowels) <- c ("name", "duration", "f0", "f1", "f2", "f3", "f4", "f120", "f220", "f320", "f150", "f250", "f350", "f180", "f280", "f380")
+library(stringr)
+vowels_new <- mutate(vowels, gender = str_sub(name, 1, 1), number = str_sub(name, 2,3), vowel = str_sub(name, 4,5))
+vowels_fct <-mutate_if(vowels_new, is.character, factor)
+qplot(data=vowels_fct, x=duration) +  labs(x = 'Длительность', y = 'Количество', title = 'Распределение гласных по длительности')
+df <- vowels_new
+qplot(data = df, x=f1, y=f2, color=vowel)

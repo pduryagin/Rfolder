@@ -1,0 +1,401 @@
+---
+title: "Количественный анализ социальных данных с помощью пакета R"
+subtitle: "Финальное домашнее задание"
+author: "Павел Дурягин"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+  toc: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+**Уважаемые Борис и Ольга, хочу предупредить, что мои знания в статистике и программировании пока что практически нулевые (это объясняется моим филологическим образованием), прошу не судить строго! Я стараюсь постепенно разбираться. Большое спасибо за ваш курс, он был очень интересным и полезным для меня. С уважением, Павел Дурягин.**
+
+
+# Загрузка пакетов
+
+Загружаем пакеты
+
+```{r}
+library(tidyverse)
+library(rio)
+library(skimr)
+library(knitr)
+library(ggplot2)
+library(stringr)
+library(visdat)
+library(naniar)
+library(corrplot)
+library(dplyr)
+library(tibble)
+library(factoextra)
+library(patchwork)
+library(broom)
+library(lmtest)
+library(GGally)
+library(caret)
+library(FFTrees)
+library(margins)
+library(rpart.plot)
+library(plotROC)
+library(ggeffects)
+library(MLmetrics)
+```
+
+# Наши данные
+Импортируем файл с данными, который представляет собой измерение акустических характеристик (длительность, значения формант) 12 гласных английского языка в произношении *45 мужчин, 48 женщин и 46 детей (мальчиков и девочек)*.
+Измерение было проведено в рамках экспериментального исследования [Hillenbrand, J., Getty, L. A., Clark, M. J., & Wheeler, K. (1995). Acoustic characteristics of American English vowels. Journal of the Acoustical Society of America, 97(5, Pt 1), 3099-3111](https://homepages.wmich.edu/~hillenbr/Papers/HillenbrandGettyClarkWheeler.pdf).
+Об этом наборе данных я узнал благодаря курсу ["Analyzing the Sounds of Languages"](http://hdl.handle.net/1811/77848)
+
+## Условные обозначения для гласных
+#####ae="had"
+#####ah="hod"
+#####aw="hawed"
+#####eh="head"
+#####er="heard"
+#####ei="haid"
+#####ih="hid"
+#####iy="heed"
+#####oa=/o/ as in "boat"
+#####oo="hood"
+#####uh="hud"
+#####uw="who'd"
+
+## Импорт данных
+```{r}
+vowels_old <- import("english_vowels.txt", head = TRUE)
+```
+
+## Работа с данными. Факторные переменные
+Присвоим имена столбцам.
+Условные обозначения гласных, пол и возрастная группа информантов закодированы в столбце filename. Извлекаем эту информацию в отдельные столбцы. Затем изменяем формат данных из текстовых в факторные.
+```{r}
+colnames(vowels_old) <- c("name", "duration", "f0", "f1", "f2", "f3", "f4", "f120", "f220", "f320", "f150", "f250", "f350", "f180", "f280", "f380")
+vowels_old <- mutate (vowels_old, gender = str_sub(name, 1, 1), number = str_sub(name, 2,3), vowel = str_sub(name, 4,5))
+vowels <- mutate_if(vowels_old, is.character, factor)
+```
+
+## Нулевые значения
+Из описательного анализа видно, что некоторые наблюдения, связанные с измерениями формант, указаны как равные нулю. Это невозможно, поэтому я решил заменить "нули" на отсутствующие значения. Затем визуализируем отсутствующие значения, из этой визуализации видим, что чаще всего отсутствуют измерения третьей и четвертой формант (*пояснение: название столбца, например, f350, означает "Значение третьей форманты в середине (f3 в 50% длительности)"*).
+
+```{r}
+vowels[vowels == 0] <- NA
+vis_miss(vowels, cluster = TRUE)
+gg_miss_var(vowels, show_pct = TRUE)
+```
+
+## Описательный анализ данных
+```{r}
+skim(vowels)
+```
+В таблице данных 19 переменных и 1668 наблюдений.
+После преобразования мы имеем 4 факторные переменные и 15 целочисленных переменных.
+
+# Строим графики
+## Гистограммы
+Посмотрим, как распределены по длительности все гласные.
+```{r}
+qplot (data = vowels, x = duration) +  labs(x = 'Длительность', y = 'Количество', title = 'Распределение гласных по длительности')
+```
+
+## "Ящики с усами" и скрипичные графики для сравнения длительности гласных
+Сравним длительность разных гласных с помощью "ящиков с усами".
+```{r}
+ggplot(data = vowels, aes(x=vowel, y=duration)) + geom_boxplot() + labs(x = 'Гласный', y = 'Длительность', title = 'Длительность гласных')
+```
+
+Отдельные графики, например, для мужчин и для женщин.
+```{r}
+vowels_adults <- subset(vowels, gender == "m" | gender == "w")
+ggplot(data = vowels_adults, aes(x=vowel, y=duration)) + 
+  geom_boxplot() + 
+  labs(x = 'Гласный', y = 'Длительность', title = 'Длительность гласных') + 
+  facet_grid(gender ~ .)
+```
+
+То же самое, только в скрипичных графиках.
+```{r}
+ggplot(data = vowels, aes(x=vowel, y=duration)) + geom_violin() + labs(x = 'Гласный', y = 'Длительность', title = 'Длительность гласных')
+```
+
+##Диаграммы рассеяния
+Диаграмма рассеяния для всех 1668 гласных. В целом для различения гласных достаточно первой и второй формант, поэтому их значения мы используем в качестве осей координат.
+```{r}
+qplot(data = vowels, x=f2, y=f1, color=vowel)
+```
+
+На самом деле две первых форманты гласных некоторым образом соответствуют положению языка (чем выше f1, тем сильнее язык опущен вниз; чем выше f2, тем сильнее язык продвинут вперед)ю Поэтому чтобы получить настоящий треугольник (или трапецоид) гласных, нужно развернуть оси в обратном направлении.
+```{r}
+qplot(data = vowels, x=f2, y=f1, color=vowel) + scale_x_reverse() + scale_y_reverse() + labs(x = 'F2, Hz', y = 'F1, Hz', title = 'Значения формант гласных (все информанты)')
+```
+
+Конечно, такая "каша" получается из-за того, что на графике вперемешку отображены данные разных полов и возрастов. Построим отдельный график, например, для мужчин.
+
+```{r}
+vowels_men <- subset(vowels, gender == "m")
+qplot(data = vowels_men, x=f2, y=f1, color=vowel) + scale_x_reverse() + scale_y_reverse() + labs(x = 'F1, Hz', y = 'F2, Hz', title = 'Значения формант гласных (только мужчины)')
+```
+
+#Корреляционная матрица
+В нашем наборе данных в основном количественные переменные. Самые главные из них - это длительность, а также значения формант. Создадим таблицу, содержащую только эти переменные и посчитаем корреляции, отбросив отсутствующие значения.
+
+```{r}
+vowels2 <- select(vowels, duration, f0, f1, f2, f3, f4)
+vowels_cor <- cor(vowels2, use = "complete.obs")
+vowels_cor
+```
+
+Визуализируем матрицу корреляций.
+```{r}
+corrplot(vowels_cor, method = "color", type = "upper")
+```
+
+#Кластеризация
+У нас есть данные в разных единицах измерения: частота формант измеряется в герцах, а длительность гласных - в миллисекундах. Отмасштабируем данные в таблице vowels_stand.
+Используем только гласные в произношении мужчин.
+
+```{r}
+vowels3 <- select(vowels_men, name, duration, f0, f1, f2, f3, f4)
+vowels3_removed <- drop_na(vowels3)
+vowels_stand <- mutate_if(vowels3_removed, is.numeric, ~ as.vector(scale(.)))
+vowels_stand_noname <- vowels_stand %>% column_to_rownames(var = 'name')
+```
+
+
+##Кластеризация методом k-means
+Предположим, что кластеров пять (например, в русском языке пять гласных фонем).
+
+```{r}
+k_means_vowels_5 <- kmeans(vowels_stand_noname, centers = 5)
+k_means_vowels_5
+```
+
+Визуализируем получившиеся кластеры.
+```{r}
+fviz_cluster(object = k_means_vowels_5, data = vowels_stand_noname,
+             ellipse.type = 'convex')
+```
+
+Но вообще гласных в амерриканском английском 12. Проведем кластеризацию с k=12 и визуализируем кластеры.
+```{r}
+k_means_vowels_12 <- kmeans(vowels_stand_noname, centers = 12)
+fviz_cluster(object = k_means_vowels_12, data = vowels_stand_noname,
+             ellipse.type = 'convex')
+```
+
+
+##поиск оптимального числа кластеров
+###Метод локтя
+```{r}
+g1 <- fviz_nbclust(vowels_stand_noname, kmeans, method = 'wss') +
+  labs(subtitle = 'Elbow method')
+g1
+```
+
+###Метод силуэта
+```{r}
+g2 <- fviz_nbclust(vowels_stand_noname, kmeans, method = 'silhouette') +
+  labs(subtitle = 'Silhouette method')
+g2
+```
+
+###Метод Gap statistics
+```{r}
+g3 <- fviz_nbclust(vowels_stand_noname, kmeans, method = 'gap_stat') +
+  labs(subtitle = 'Gap statistic method')
+g3
+```
+
+### Красиво расположенные графики
+
+```{r}
+(g1 + g2) / g3
+```
+
+Последний метод предлагает делить на три кластера. Это имеет отношение к действительности, потому что на самом деле три "основных" гласных, формирующих "треугольник" - это [i], [u], [a].
+```{r}
+k_means_vowels_3 <- kmeans(vowels_stand_noname, centers = 3)
+fviz_cluster(object = k_means_vowels_3, data = vowels_stand_noname,
+             ellipse.type = 'convex')
+```
+
+Я не смог придумать, как на этом наборе данных сделать иерархическую кластеризацию.
+
+##Метод главных компонент
+
+Упростим задачу компьютеру и выберем только измерения трех "кардинальных" гласных и только в произношении мужчин. Сохраним эти данные (отмасштабироанные) в таблице *vowels_easy*.
+
+```{r}
+vowels_easy <- select(vowels_men, vowel, name, duration, f0, f1, f2, f3, f4)
+vowels_easy <- drop_na(vowels_easy)
+vowels_easy <- mutate_if(vowels_easy, is.numeric, ~ as.vector(scale(.)))
+vowels_easy <- subset(vowels_easy, vowel == "ae" | vowel == "iy" | vowel == "uw")
+qplot(data = vowels_easy, x=f2, y=f1, color=vowel) + scale_x_reverse() + scale_y_reverse() + labs(x = 'F1, Hz', y = 'F2, Hz', title = 'Значения формант трех "кардинальных" гласных (только мужчины)')
+skim(vowels_easy)
+```
+
+применяем метод главных компонент.
+
+```{r}
+vowels_easy_noname <- select(vowels_easy, name, duration, f0, f1, f2, f3, f4)
+vowels_easy_noname <- remove_rownames(vowels_easy_noname)
+vowels_easy_noname <- vowels_easy_noname %>% column_to_rownames(var = 'name')
+vowels_pca <- prcomp(vowels_easy_noname)
+vowels_pca
+```
+
+Визуализируем данные в осях двух первых компонент. Также построим график с проекциями исходных переменных.
+```{r}
+fviz_pca_ind(vowels_pca, repel = TRUE)
+fviz_pca_biplot(vowels_pca, repel = TRUE)
+```
+
+Две первых компоненты объясняют менее 70% (точнее, 67%) разброса исходных наблюдений.
+```{r}
+fviz_eig(vowels_pca)
+```
+
+Значение второй форманты вносит наибольший вклад в первую главную компоненту.
+```{r}
+fviz_contrib(vowels_pca, choice = 'var', axes = 1)
+```
+
+А вот этот "упрощенный" набор данных получилось очень красиво разделить на кластеры методом k-means. 
+```{r}
+set.seed(777)
+k_means_vowels_easy <- kmeans(vowels_easy_noname, centers = 3)
+k_means_vowels_easy
+fviz_cluster(object = k_means_vowels_easy, data = vowels_easy_noname,
+             ellipse.type = 'convex', repel = TRUE)
+```
+
+# Регрессия
+**Этот семинар я пропустил. К сожалению, с регрессией пока не получилось разобраться. Но кое-что я попытался сделать.**
+Построим парную регрессию значения длительности гласного на константу и значение нулевой форманты. 
+```{r}
+vowels_r <- lm (data = vowels, duration ~ f0)
+summary(vowels_r)
+```
+
+Линия регрессии для модели, в которой зависимая переменная - это длительность гласного, а объясняющая - значение нулевой форманты.
+```{r}
+ggplot(data = vowels, aes(x = f0, y = duration)) +
+  geom_point() +
+  geom_smooth(method = 'lm')
+```
+
+Добавим к объясняющим переменным значения первой и второй формант.
+
+```{r}
+vowels_ur <- lm(data = vowels, duration ~ f0 + f1 + f2) 
+summary(vowels_ur)
+```
+
+Построим диагностический график.
+```{r}
+ggnostic (model = vowels_ur)
+```
+
+#Классификация
+У нас есть мужчины (взрослые мужчины и мальчики) и женщины (взрослые женщины и девочки). Можно ли определить пол человека, если нам известны значения формант и длительности произнесенных ими гласных?
+
+Чтобы сделать классификацию бинарной, в столбце *gender* объединим мальчиков и мужчин в переменную *male*, девочек и женщин в переменную *female*.
+
+```{r}
+vowels_class <- mutate(vowels, gender = fct_collapse(gender, male = c('b', 'm'), female = c('g', 'w')))
+vowels_class <- select(vowels_class, gender, f0, f1, f2, f3, f4, duration, vowel)
+vowels_class <- drop_na(vowels_class)
+```
+
+Разделим выборку на две части: обучающую и тестовую.
+```{r}
+set.seed(777)
+train_rows <- createDataPartition(vowels_class$gender, p = 0.8, list = FALSE)
+vowels_train <- vowels_class[train_rows, ]
+vowels_test <- vowels_class[-train_rows, ]
+```
+
+## Модель с логистической регрессией
+```{r}
+vowels_lmodel_glm <- glm(data = vowels_train, gender ~ f0 + f1 + f2 + f3 + f4 + duration, family = binomial(link = 'logit'))
+summary(vowels_lmodel_glm)
+```
+
+Найдем предельные эффекты и визуализируем эффект f0.
+```{r}
+vowels_margins <- margins(vowels_lmodel_glm)
+summary(vowels_margins)
+pred_vowels_vis <- ggpredict(vowels_lmodel_glm, terms = 'f0')
+plot(pred_vowels_vis)
+```
+
+Оценка модели с помощью пакета caret.
+```{r}
+vowels_lmodel <- train(data = vowels_train, gender ~ f0 + f1 + f2 + f3 + f4 + duration, family = binomial(link = 'logit'), method = 'glm')
+summary(vowels_lmodel)
+```
+
+Строим прогнозы для тестовых данных.
+```{r}
+vowels_pred <- predict(vowels_lmodel, newdata = vowels_test)
+head(vowels_pred)
+
+vowels_prob <- predict(vowels_lmodel, newdata = vowels_test, type = 'prob')
+head(vowels_prob)
+```
+
+Матрица ошибок. Точность предсказания составила 75%.
+```{r}
+confusionMatrix(data = vowels_pred, reference = vowels_test$gender)
+```
+
+Создадим таблицу с данными предсказания.
+```{r}
+vowels_test_set <- data.frame(male = vowels_prob$male,
+                        female = vowels_prob$female,
+                        pred = vowels_pred,
+                        obs = vowels_test$gender)
+```
+
+Наконец, строим ROC-кривую.
+```{r}
+ggplot(vowels_test_set, aes(d = obs, m = male)) +
+  geom_roc(n.cuts = 0)
+```
+
+## "Быстрое и стройное дерево"
+```{r}
+vowels_train2 <- mutate(vowels_train, ybin = ifelse(gender == 'male', 1, 0)) 
+fftree_model <- FFTrees(formula = ybin ~ f0 + f1 + f2 + f3 + f4 + duration,
+                     data = vowels_train2)
+plot(fftree_model)
+```
+
+## "Случайный лес"
+```{r}
+ranger_model <- train(gender ~ f0 + f1 + f2 + f3 + f4 + duration, data = vowels_train,
+                      method = 'ranger',
+                      na.action = na.omit,
+                      importance = 'impurity')
+```
+
+Попробуем определить важность переменных.
+```{r}
+ranger_import <- varImp(ranger_model)
+ranger_import
+plot(ranger_import,
+    main = 'Важность переменных случайного леса',
+    xlab = 'Среднее падение индекса Джини')
+```
+
+Наконец, строим прогноз на основе полученной модели. Точность оказалась на 4% выше, чем при использовании модели с логистической регрессией, и достигла 79%.
+```{r}
+vowels_ranger <- mutate(vowels_test,
+  yhat = predict(ranger_model, vowels_test, na.action = na.pass))
+confusionMatrix(vowels_ranger$yhat, vowels_ranger$gender)
+```
+
+#Конец.
+![Спасибо](https://gruzdev.org/wp-content/uploads/2017/06/spasibo-1080x675.jpg)
